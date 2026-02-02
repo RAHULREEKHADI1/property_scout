@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+langchain==1.2.7
+langgraph
+langchain-openai
+pymongo
+playwright
+selenium
+beautifulsoup4
+requests
+python-dotenv
+pydantic
+cloudinary==1.41.0
+tavily-python

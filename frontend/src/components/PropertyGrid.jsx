@@ -26,12 +26,18 @@ const PropertyGrid = ({ properties }) => {
     } else {
       const query = searchQuery.toLowerCase();
       const filtered = allProperties.filter(property => {
+        const symbol = property.currency_symbol || '$';
+        const displayedPrice = symbol + property.price.toLocaleString() + '/mo';
+
         return (
           (property.title && property.title.toLowerCase().includes(query)) ||
           (property.address && property.address.toLowerCase().includes(query)) ||
           (property.description && property.description.toLowerCase().includes(query)) ||
           (property.bedrooms && property.bedrooms.toString().includes(query)) ||
-          (property.price && property.price.toString().includes(query))
+          (property.price && property.price.toString().includes(query)) ||
+          (property.currency_symbol && property.currency_symbol.includes(query)) ||
+          (property.currency_code && property.currency_code.toLowerCase().includes(query)) ||
+          displayedPrice.toLowerCase().includes(query)
         );
       });
       setDisplayedProperties(filtered);
@@ -95,7 +101,7 @@ const PropertyGrid = ({ properties }) => {
           )}
           
           <div className="bg-gradient-to-r from-emerald-500 to-teal-600 text-white px-4 py-1.5 rounded-full font-bold text-lg shadow-lg flex-shrink-0 ml-auto">
-            ${property.price.toLocaleString()}/mo
+            {property.currency_symbol}{property.price.toLocaleString()}/mo
           </div>
         </div>
 

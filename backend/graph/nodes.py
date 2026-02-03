@@ -9,9 +9,16 @@ from tools.browser_tool import BrowserTool
 from tools.bash_tool import create_directory, write_file, move_file
 from tools.mongo_tool import MongoDBTool
 from tools.cloudinary_tool import CloudinaryTool
+from tools.currency_tool import detect_currency
+from dotenv import load_dotenv
+load_dotenv()
 
 try:
-    llm = ChatOpenAI(model="gpt-4o", temperature=0, model_kwargs={"OPENAI_API_KEY": os.getenv("OPENAI_API_KEY")})
+    llm = ChatOpenAI(
+        model="gpt-4o", 
+        temperature=0,
+        api_key=os.getenv("OPENAI_API_KEY") 
+    )
 except Exception as e:
     print(f"Warning: Could not initialize OpenAI: {e}")
     llm = None
@@ -104,6 +111,27 @@ def _validate_criteria(raw: dict, user_message: str) -> dict:
     return raw
 
 
+def extract_max_results(message: str) -> int:
+    """
+    If the user asked for a specific number of properties (e.g. "show me 3",
+    "I want 4 properties", "give me 5 listings") return that number.
+    Otherwise default to 5.
+
+    Only values 1-10 are honoured; anything outside that range is clamped.
+    """
+    patterns = [
+        r'(?:show|give|find|get|list|return)\s+(?:me\s+)?(\d+)\s*(?:propert|apartment|listing|result|option)',
+        r'(\d+)\s*(?:propert|apartment|listing|result|option)',
+        r'(?:only|just|top|around|about)\s+(\d+)',
+    ]
+    for pat in patterns:
+        m = re.search(pat, message, re.IGNORECASE)
+        if m:
+            n = int(m.group(1))
+            return max(1, min(n, 10))   
+    return 5  
+
+
 def scout_node(state: Dict) -> Dict:
     messages = state.get("messages", [])
     user_prefs = state.get("user_preferences", {})
@@ -159,11 +187,14 @@ Return ONLY a single valid JSON object — no markdown, no explanation:
         criteria = extract_criteria_simple(last_message)
 
     query = (f"{criteria.get('bedrooms', '1')} bedroom apartment in "
-             f"{criteria.get('location', 'Austin')} under ${criteria.get('max_price', 2500)}")
+             f"{criteria.get('location', 'Austin')} under {criteria.get('max_price', 2500)}")
     print(f"\n Search Query: {query}")
 
+    wanted_count = extract_max_results(last_message)
+    print(f" User requested up to {wanted_count} results")
+
     print(f"\n Step 1: Searching for properties…")
-    properties = search_properties(query, max_price=criteria.get("max_price"))
+    properties = search_properties(query, max_price=criteria.get("max_price"), max_results=wanted_count)
     print(f" Found {len(properties)} properties from search")
 
     print(f"\n Step 2: Fetching detailed property information…")
@@ -186,7 +217,7 @@ Return ONLY a single valid JSON object — no markdown, no explanation:
 2. description  – A polished 2-3 sentence description suitable for a property listing.
                   Base it on the raw description if it contains useful info; otherwise compose a
                   realistic description for a {prop.get('bedrooms', 1)}-bedroom apartment in {criteria.get('location', 'Austin')}
-                  priced at ${prop.get('price', 0)}/month.
+                  priced at {prop.get('price', 0)}/month.
                   Do NOT include SEO spam, nav links, or unrelated content.
 
 Raw input:
@@ -194,7 +225,7 @@ Raw input:
   description : {prop.get('description', '')}
   bedrooms    : {prop.get('bedrooms', 1)}
   bathrooms   : {prop.get('bathrooms', 1)}
-  price       : ${prop.get('price', 0)}/month
+  price       : {prop.get('price', 0)}/month
   location    : {criteria.get('location', 'Austin')}
 
 Return ONLY valid JSON, no markdown:
@@ -347,6 +378,7 @@ def broker_node(state: Dict) -> Dict:
     properties = state.get("properties", [])
     screenshots = state.get("screenshots", [])
     folders = []
+    cur_symbol = state.get("currency_symbol", "$") 
 
     print(f"\n{'=' * 60}")
     print(f"📄 BROKER AGENT – File Creation Node")
@@ -386,7 +418,7 @@ def broker_node(state: Dict) -> Dict:
                 print(f"   No screenshot available for property {idx + 1}")
 
             professional_description = prop.get("description", "")
-            lease_terms = _default_lease_terms(prop)
+            lease_terms = _default_lease_terms(prop, cur_symbol)
 
             if llm:
                 try:
@@ -394,7 +426,7 @@ def broker_node(state: Dict) -> Dict:
                     desc_prompt = f"""Write a professional, engaging 3-4 sentence property listing description for:
 
 Address  : {prop['address']}
-Price    : ${prop['price']}/month
+Price    : {cur_symbol}{prop['price']}/month
 Bedrooms : {prop['bedrooms']}
 Bathrooms: {prop['bathrooms']}
 Pet Policy: {'Pets Allowed' if prop.get('pet_friendly') else 'No Pets'}
@@ -422,7 +454,7 @@ Make it property-specific — weave in the actual address, rent, bedrooms, and p
 
 Property details:
   Address       : {prop['address']}
-  Monthly Rent  : ${prop['price']}
+  Monthly Rent  : {cur_symbol}{prop['price']}
   Bedrooms      : {prop['bedrooms']}
   Bathrooms     : {prop['bathrooms']}
   Pet Policy    : {'Pets Allowed' if prop.get('pet_friendly') else 'No Pets'}
@@ -456,7 +488,7 @@ Return ONLY the lease text — no JSON wrapper."""
 ═══════════════════════════════════════════════════════════
 
 Property Address : {prop['address']}
-Monthly Rent     : ${prop['price']}
+Monthly Rent     : {cur_symbol}{prop['price']}
 Bedrooms         : {prop['bedrooms']}
 Bathrooms        : {prop['bathrooms']}
 Pet Policy       : {'Pets Allowed' if prop.get('pet_friendly') else 'No Pets'}
@@ -493,7 +525,7 @@ Generated by Estate-Scout AI Agent
 ═══════════════════════════════════════════════════════════
 
 Title       : {prop['title']}
-Price       : ${prop['price']}/month
+Price       : {cur_symbol}{prop['price']}/month
 Address     : {prop['address']}
 
 Specifications:
@@ -546,11 +578,11 @@ Generated by Estate-Scout AI Agent
     }
 
 
-def _default_lease_terms(prop: dict) -> str:
+def _default_lease_terms(prop: dict, cur_symbol: str = "$") -> str:
     """Static fallback lease when LLM is unavailable."""
     pet_clause = (
-        "Pets are permitted subject to a one-time pet deposit of $500 and a "
-        "monthly pet fee of $50.  Tenant must provide proof of renter's "
+        f"Pets are permitted subject to a one-time pet deposit of {cur_symbol}500 and a "
+        f"monthly pet fee of {cur_symbol}50.  Tenant must provide proof of renter's "
         "insurance that covers pet liability."
         if prop.get("pet_friendly") else
         "No pets of any kind are permitted on the premises without prior "
@@ -560,10 +592,10 @@ def _default_lease_terms(prop: dict) -> str:
 This Draft Lease Agreement ("Agreement") is entered into between the Landlord and the Tenant (details to be finalised at signing) for the residential property located at {prop['address']}.
 
 2. LEASE TERM & RENT
-The lease term shall be twelve (12) months commencing on a date mutually agreed upon.  The monthly rent is ${prop['price']}, payable on or before the 1st of each calendar month.  Late payments beyond a grace period of five (5) days will incur a late fee of 5 % of the monthly rent.
+The lease term shall be twelve (12) months commencing on a date mutually agreed upon.  The monthly rent is {cur_symbol}{prop['price']}, payable on or before the 1st of each calendar month.  Late payments beyond a grace period of five (5) days will incur a late fee of 5 % of the monthly rent.
 
 3. SECURITY DEPOSIT
-A security deposit equal to one (1) month's rent (${prop['price']}) is due prior to move-in.  The deposit will be returned within 30 days of vacating, less any deductions for damages beyond normal wear and tear.
+A security deposit equal to one (1) month's rent ({cur_symbol}{prop['price']}) is due prior to move-in.  The deposit will be returned within 30 days of vacating, less any deductions for damages beyond normal wear and tear.
 
 4. TENANT OBLIGATIONS
 The Tenant is responsible for keeping the property clean and in good repair, paying all utilities unless otherwise agreed, and complying with all local housing and health codes.
@@ -618,6 +650,7 @@ def crm_node(state: Dict) -> Dict:
 
     print(f"\n Step 2: Saving properties to database…")
     saved_count = 0
+    cur_symbol = state.get("currency_symbol", "$")
     for idx, prop in enumerate(properties):
         try:
             folder_path = folders[idx] if idx < len(folders) else ""
@@ -643,7 +676,7 @@ def crm_node(state: Dict) -> Dict:
 
             mongo_tool.insert_listing(listing_data)
             saved_count += 1
-            print(f"   Property {idx + 1} saved – {prop['address']}  |  ${prop['price']}")
+            print(f"   Property {idx + 1} saved – {prop['address']}  |  {cur_symbol}{prop['price']}")
 
         except Exception as e:
             print(f"   Error saving property {idx + 1}: {e}")

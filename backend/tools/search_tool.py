@@ -5,10 +5,6 @@ import re
 import random
 
 
-# ---------------------------------------------------------------------------
-# PUBLIC ENTRY POINT
-# ---------------------------------------------------------------------------
-
 def search_properties(query: str, max_price: Optional[int] = None) -> List[Dict]:
     """
     Search for rental properties via Tavily and return a cleaned list.
@@ -29,7 +25,6 @@ def search_properties(query: str, max_price: Optional[int] = None) -> List[Dict]
             "Get your key at: https://tavily.com"
         )
 
-    # ── resolve the effective price cap ──
     if max_price is None:
         max_price = extract_price_from_query(query) or 2500
     print(f"   [search_tool] Price cap enforced: ${max_price}")
@@ -46,7 +41,6 @@ def search_properties(query: str, max_price: Optional[int] = None) -> List[Dict]
             content = result.get('content', '')
             url     = result.get('url', '')
 
-            # ── skip results that are clearly not property listings ──
             if _is_irrelevant_result(title, content, url):
                 print(f"   [{idx}] Skipped – irrelevant result: {title[:60]}")
                 continue
@@ -54,9 +48,9 @@ def search_properties(query: str, max_price: Optional[int] = None) -> List[Dict]
             property_data = {
                 "id":           idx + 1,
                 "title":        clean_title(title),
-                "price":        extract_real_price(content, title, query, max_price),   # ← capped
+                "price":        extract_real_price(content, title, query, max_price),   
                 "address":      extract_real_address(content, title, query, idx),
-                "description":  extract_description(content, title, query),             # ← smarter
+                "description":  extract_description(content, title, query),            
                 "bedrooms":     extract_bedrooms_from_content(content, query),
                 "bathrooms":    extract_bathrooms(content, query),
                 "pet_friendly": is_pet_friendly(content, query),
@@ -79,11 +73,6 @@ def search_properties(query: str, max_price: Optional[int] = None) -> List[Dict]
         raise Exception(f"Failed to search properties: {str(e)}.")
 
 
-# ---------------------------------------------------------------------------
-# RELEVANCE FILTER
-# ---------------------------------------------------------------------------
-
-# Phrases that almost certainly mean the search result is NOT a property listing
 _IRRELEVANT_KEYWORDS = [
     "emissions standards", "federal register", "epa ", "sec filing",
     "10-k ", "annual report", "privacy policy", "terms of service",
@@ -96,7 +85,6 @@ def _is_irrelevant_result(title: str, content: str, url: str) -> bool:
     for kw in _IRRELEVANT_KEYWORDS:
         if kw in combined:
             return True
-    # Government / reference domains
     irrelevant_domains = ["federalregister.gov", "wikipedia.org", "irs.gov", "sec.gov"]
     for domain in irrelevant_domains:
         if domain in url.lower():
@@ -104,11 +92,6 @@ def _is_irrelevant_result(title: str, content: str, url: str) -> bool:
     return False
 
 
-# ---------------------------------------------------------------------------
-# TITLE CLEANING
-# ---------------------------------------------------------------------------
-
-# Generic titles that carry zero property information
 _GENERIC_TITLES = [
     "results", "search results", "home", "listings", "page",
     "rental", "rentals", "apartments", "find",
@@ -120,16 +103,12 @@ def clean_title(title: str) -> str:
     title = re.sub(r'\s*\|.*', '', title)
     title = title.strip()
 
-    # If what's left is just a generic word / number, replace
     if title.lower().rstrip('s').strip() in _GENERIC_TITLES or re.match(r'^\d+\s*(results?)?$', title, re.I):
         title = "Rental Property Listing"
 
     return title
 
 
-# ---------------------------------------------------------------------------
-# PRICE EXTRACTION  ←  now enforces max_price cap
-# ---------------------------------------------------------------------------
 
 def extract_real_price(content: str, title: str, query: str, max_price: int) -> int:
     """
@@ -150,7 +129,6 @@ def extract_real_price(content: str, title: str, query: str, max_price: int) -> 
         r'\$(\d{1,2},?\d{3})',
     ]
 
-    # ── try content first, then title ──
     for source in (content, title):
         for pattern in price_patterns:
             matches = re.findall(pattern, source, re.IGNORECASE)
@@ -168,11 +146,9 @@ def extract_real_price(content: str, title: str, query: str, max_price: int) -> 
                 except (ValueError, TypeError):
                     continue
 
-    # ── no price found anywhere → generate a realistic value ≤ max_price ──
-    # Floor is 60 % of max_price (so results feel varied but affordable)
     floor = max(400, int(max_price * 0.60))
     estimated_price = random.randint(floor, max_price)
-    estimated_price = (estimated_price // 50) * 50   # round to nearest $50
+    estimated_price = (estimated_price // 50) * 50 
     print(f"    No price found → estimated ${estimated_price} (range ${floor}–${max_price})")
     return estimated_price
 
@@ -187,9 +163,6 @@ def extract_price_from_query(query: str) -> Optional[int]:
     return None
 
 
-# ---------------------------------------------------------------------------
-# ADDRESS EXTRACTION
-# ---------------------------------------------------------------------------
 
 def extract_real_address(content: str, title: str, query: str, idx: int) -> str:
     """
@@ -210,7 +183,6 @@ def extract_real_address(content: str, title: str, query: str, idx: int) -> str:
                 print(f"    Extracted address: {address}")
                 return address
 
-    # ── deterministic placeholder ──
     location = extract_location_from_query(query)
 
     street_prefixes = ["North", "South", "East", "West", ""]
@@ -230,11 +202,6 @@ def extract_real_address(content: str, title: str, query: str, idx: int) -> str:
     return generated_address
 
 
-# ---------------------------------------------------------------------------
-# DESCRIPTION EXTRACTION  ←  smarter filtering
-# ---------------------------------------------------------------------------
-
-# Phrases that indicate the content snippet is SEO / nav junk
 _JUNK_PHRASES = [
     "clear all", "speak now", "sign in", "log in", "cookie",
     "privacy policy", "terms of", "click here", "subscribe",
@@ -249,27 +216,22 @@ def extract_description(content: str, title: str, query: str) -> str:
       3. If the result is too short or still looks like nav text,
          return a generic but relevant placeholder.
     """
-    # strip HTML-ish artefacts
     desc = re.sub(r'<[^>]+>', ' ', content)
     desc = re.sub(r'\s+', ' ', desc).strip()
 
-    # remove known junk
     for phrase in _JUNK_PHRASES:
         desc = re.sub(re.escape(phrase), '', desc, flags=re.IGNORECASE)
 
-    # remove leading quoted fragments that are clearly from another listing
     desc = re.sub(r'^["\u201c].*?["\u201d]\s*\.?\s*', '', desc).strip()
 
     desc = desc[:250].strip()
 
-    # If barely anything useful remains, use a safe placeholder
     if len(desc) < 40:
         location = extract_location_from_query(query)
         desc = (f"A comfortable rental property located in {location}. "
                 f"Ideal for individuals or families looking for a well-positioned home "
                 f"in a convenient neighbourhood.")
 
-    # Ensure it ends cleanly (no mid-word cut)
     if len(desc) == 250:
         last_space = desc.rfind(' ')
         if last_space > 200:
@@ -278,11 +240,6 @@ def extract_description(content: str, title: str, query: str) -> str:
             desc += "…"
 
     return desc
-
-
-# ---------------------------------------------------------------------------
-# BEDROOMS / BATHROOMS
-# ---------------------------------------------------------------------------
 
 def extract_bedrooms_from_content(content: str, query: str) -> int:
     bedroom_patterns = [
@@ -316,14 +273,9 @@ def extract_bathrooms(content: str, query: str) -> int:
     bath_match = re.search(r'(\d+)\s*(?:bath|bathroom)s?', content.lower())
     if bath_match:
         return int(bath_match.group(1))
-    # Default: 1 bath for 1BR, 2 bath for 2+ BR (more realistic)
     bedrooms = extract_bedrooms(query)
     return 1 if bedrooms <= 1 else 2
 
-
-# ---------------------------------------------------------------------------
-# PET POLICY
-# ---------------------------------------------------------------------------
 
 def is_pet_friendly(content: str, query: str) -> bool:
     pet_keywords = ['pet friendly', 'pets allowed', 'pet ok', 'dogs allowed',
@@ -338,10 +290,6 @@ def is_pet_friendly(content: str, query: str) -> bool:
         return True
     return False
 
-
-# ---------------------------------------------------------------------------
-# LOCATION HELPER
-# ---------------------------------------------------------------------------
 
 def extract_location_from_query(query: str) -> str:
     query_lower = query.lower()
@@ -363,10 +311,6 @@ def extract_location_from_query(query: str) -> str:
 
     return "the requested area"
 
-
-# ---------------------------------------------------------------------------
-# DETAIL FETCHER  (stub — real implementation would scrape the URL)
-# ---------------------------------------------------------------------------
 
 def fetch_property_details(url: str) -> Dict:
     print(f" Fetching: {url}")

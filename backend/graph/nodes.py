@@ -21,16 +21,11 @@ cloudinary_tool = CloudinaryTool()
 
 FRONTEND_URL = os.getenv("FRONTEND_URL")
 
-# ---------------------------------------------------------------------------
-# HELPERS
-# ---------------------------------------------------------------------------
-
 def extract_criteria_simple(message: str) -> dict:
     """Regex-based fallback extraction — used only when the LLM call fails."""
     message_lower = message.lower()
     criteria = {}
 
-    # ── location ──
     location_patterns = [
         r'in\s+([A-Za-z\s]+?)(?:\s+under|\s+apartment|\s+for|\s*,|$)',
         r'at\s+([A-Za-z\s]+?)(?:\s+under|\s+apartment|\s+for|\s*,|$)',
@@ -56,7 +51,6 @@ def extract_criteria_simple(message: str) -> dict:
 
     criteria["location"] = location if location else "Not specified"
 
-    # ── price ──
     price_match = re.search(r'\$?([\d,]+)k?', message)
     if price_match:
         price = int(price_match.group(1).replace(',', ''))
@@ -66,7 +60,6 @@ def extract_criteria_simple(message: str) -> dict:
     else:
         criteria["max_price"] = 2500
 
-    # ── bedrooms ──
     if "studio" in message_lower:
         criteria["bedrooms"] = "1"
     elif re.search(r'\b2\b|two\s*bed', message_lower):
@@ -76,7 +69,6 @@ def extract_criteria_simple(message: str) -> dict:
     else:
         criteria["bedrooms"] = "1"
 
-    # ── requirements ──
     reqs = []
     if any(w in message_lower for w in ["pet", "dog", "cat"]):
         reqs.append("pet friendly")
@@ -92,17 +84,15 @@ def _validate_criteria(raw: dict, user_message: str) -> dict:
       • If the LLM invented or changed the price, override with regex extraction.
       • Fill in missing keys with safe defaults.
     """
-    # ── Force price from user's original text (source of truth) ──
     price_match = re.search(r'\$?([\d,]+)k?', user_message)
     if price_match:
         user_price = int(price_match.group(1).replace(',', ''))
         if user_price < 100:
             user_price = user_price * 1000
-        raw["max_price"] = user_price          # ← HARD override
+        raw["max_price"] = user_price         
     else:
         raw.setdefault("max_price", 2500)
 
-    # Coerce to int just in case LLM returned a string
     try:
         raw["max_price"] = int(raw["max_price"])
     except (TypeError, ValueError):
@@ -113,10 +103,6 @@ def _validate_criteria(raw: dict, user_message: str) -> dict:
     raw.setdefault("requirements", "none")
     return raw
 
-
-# ---------------------------------------------------------------------------
-# NODE 1 — SCOUT  (search & criteria extraction)
-# ---------------------------------------------------------------------------
 
 def scout_node(state: Dict) -> Dict:
     messages = state.get("messages", [])
@@ -135,7 +121,6 @@ def scout_node(state: Dict) -> Dict:
     print(f"User Query: {last_message}")
     print(f"User Preferences: {json.dumps(user_prefs)}")
 
-    # ── Step A: extract & validate search criteria ──
     criteria = None
     if llm:
         try:
@@ -159,7 +144,6 @@ Return ONLY a single valid JSON object — no markdown, no explanation:
                 HumanMessage(content=last_message)
             ])
 
-            # Strip any markdown fences the LLM may have added
             raw_text = response.content.strip()
             raw_text = re.sub(r'^```(?:json)?\s*', '', raw_text)
             raw_text = re.sub(r'\s*```$', '', raw_text)
@@ -174,7 +158,6 @@ Return ONLY a single valid JSON object — no markdown, no explanation:
     else:
         criteria = extract_criteria_simple(last_message)
 
-    # ── Step B: search (pass max_price so search_tool can cap) ──
     query = (f"{criteria.get('bedrooms', '1')} bedroom apartment in "
              f"{criteria.get('location', 'Austin')} under ${criteria.get('max_price', 2500)}")
     print(f"\n Search Query: {query}")
@@ -183,7 +166,6 @@ Return ONLY a single valid JSON object — no markdown, no explanation:
     properties = search_properties(query, max_price=criteria.get("max_price"))
     print(f" Found {len(properties)} properties from search")
 
-    # ── Step C: fetch extra details per listing ──
     print(f"\n Step 2: Fetching detailed property information…")
     for idx, prop in enumerate(properties):
         if prop.get('url'):
@@ -193,7 +175,6 @@ Return ONLY a single valid JSON object — no markdown, no explanation:
             except Exception as e:
                 print(f"  Failed to fetch details: {e}")
 
-    # ── Step D: LLM-based description & title clean-up ──
     if llm and properties:
         print(f"\n Step 3: Cleaning titles & descriptions with LLM…")
         for idx, prop in enumerate(properties):
@@ -235,7 +216,6 @@ Return ONLY valid JSON, no markdown:
             except Exception as e:
                 print(f"   [{idx + 1}] LLM clean failed: {e} — keeping original")
 
-    # ── Step E: pet filter from stored prefs ──
     if user_prefs.get("has_pet"):
         print(f"\n Filtering for pet-friendly properties (user has pet)")
         properties = [p for p in properties if p.get("pet_friendly", False)]
@@ -252,9 +232,6 @@ Return ONLY valid JSON, no markdown:
     }
 
 
-# ---------------------------------------------------------------------------
-# NODE 2 — INSPECTOR  (browser / screenshot)  ← unchanged logic
-# ---------------------------------------------------------------------------
 
 async def inspector_node(state: Dict) -> Dict:
     properties = state.get("properties", [])
@@ -358,9 +335,6 @@ async def inspector_node(state: Dict) -> Dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# NODE 3 — BROKER  (file creation + LLM-generated content)
-# ---------------------------------------------------------------------------
 
 def broker_node(state: Dict) -> Dict:
     """
@@ -391,7 +365,6 @@ def broker_node(state: Dict) -> Dict:
             print(f"   Address: {address}")
             print(f"{'─' * 50}")
 
-            # ── folder ──
             address_clean = re.sub(r'[^\w\s-]', '', address)
             address_clean = re.sub(r'[\s]+', '_', address_clean)
             folder_name = f"{address_clean}_{idx}"
@@ -401,7 +374,6 @@ def broker_node(state: Dict) -> Dict:
             create_directory(folder_path)
             print(f"   Folder created: {folder_name}")
 
-            # ── screenshot ──
             if idx < len(screenshots) and screenshots[idx] and os.path.exists(screenshots[idx]):
                 new_screenshot_path = os.path.join(folder_path, "street_view.png")
                 print(f"  Step 2: Moving screenshot…")
@@ -413,7 +385,6 @@ def broker_node(state: Dict) -> Dict:
             else:
                 print(f"   No screenshot available for property {idx + 1}")
 
-            # ── LLM-generated description & lease ──
             professional_description = prop.get("description", "")
             lease_terms = _default_lease_terms(prop)
 
@@ -479,7 +450,6 @@ Return ONLY the lease text — no JSON wrapper."""
                 except Exception as e:
                     print(f"   Lease LLM call failed: {e} — using template")
 
-            # ── write lease_draft.txt ──
             print(f"  Step 4: Writing lease_draft.txt…")
             lease_content = f"""═══════════════════════════════════════════════════════════
                     DRAFT LEASE AGREEMENT
@@ -517,7 +487,6 @@ Generated by Estate-Scout AI Agent
             write_file(lease_path, lease_content)
             print(f"   lease_draft.txt written")
 
-            # ── write info.txt ──
             print(f"  Step 5: Writing info.txt…")
             info_content = f"""═══════════════════════════════════════════════════════════
                     PROPERTY INFORMATION
@@ -612,10 +581,6 @@ Either party may terminate this Agreement by providing at least 30 days' written
 This Agreement shall be governed by the laws of the state in which the property is located.  Any disputes shall first be attempted through mediation before legal action is pursued."""
 
 
-# ---------------------------------------------------------------------------
-# NODE 4 — CRM  (MongoDB persistence)  ← unchanged logic
-# ---------------------------------------------------------------------------
-
 def crm_node(state: Dict) -> Dict:
     properties = state.get("properties", [])
     folders = state.get("folders_created", [])
@@ -635,7 +600,6 @@ def crm_node(state: Dict) -> Dict:
 
     user_prefs = state.get("user_preferences", {})
 
-    # ── preference detection ──
     print(f"\n Step 1: Analysing user preferences…")
     preference_updated = False
     if any(w in last_message.lower() for w in ("dog", "cat", "pet")):
@@ -652,7 +616,6 @@ def crm_node(state: Dict) -> Dict:
     else:
         print(f"   No new preferences detected")
 
-    # ── save listings ──
     print(f"\n Step 2: Saving properties to database…")
     saved_count = 0
     for idx, prop in enumerate(properties):

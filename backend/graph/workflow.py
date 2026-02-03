@@ -3,6 +3,7 @@ from langchain_core.messages import HumanMessage
 from graph.state import AgentState
 from graph.nodes import scout_node, inspector_node, broker_node, crm_node
 from tools.mongo_tool import MongoDBTool
+from tools.currency_tool import detect_currency
 import os
 
 mongo_tool = MongoDBTool()
@@ -35,22 +36,33 @@ async def run_agent(user_message: str):
     try:
         graph = create_agent_graph()
         
+        currency = detect_currency(user_message)
+        print(f"   Detected currency: {currency.code} ({currency.symbol})")
+
         initial_state = {
             "messages": [HumanMessage(content=user_message)],
             "properties": [],
             "user_preferences": user_prefs.get("preferences", {}),
             "current_step": "start",
             "screenshots": [],
-            "folders_created": []
+            "folders_created": [],
+            "currency_code": currency.code,
+            "currency_symbol": currency.symbol,
         }
         
         result = await graph.ainvoke(initial_state)
         
         properties_with_urls = []
         folders = result.get("folders_created", [])
+        cur_code   = result.get("currency_code", "USD")
+        cur_symbol = result.get("currency_symbol", "$")
         
         for idx, prop in enumerate(result.get("properties", [])):
             prop_copy = dict(prop)
+            
+            # stamp currency onto each card so frontend can read it directly
+            prop_copy["currency_code"]   = cur_code
+            prop_copy["currency_symbol"] = cur_symbol
             
             if idx < len(folders):
                 folder_path = folders[idx]

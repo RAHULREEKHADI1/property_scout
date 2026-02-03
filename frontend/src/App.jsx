@@ -57,12 +57,6 @@ function App() {
                   <PropertyGrid properties={properties} />
                 </div>
               </div>
-
-              <footer className="text-center mt-12 pb-6">
-                <p className="text-gray-500 text-sm">
-                  Powered by AI • Real-time Property Data • Cloudinary Image Storage
-                </p>
-              </footer>
             </div>
           } />
         </Routes>

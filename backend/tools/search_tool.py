@@ -5,16 +5,18 @@ import re
 import random
 
 
-def search_properties(query: str, max_price: Optional[int] = None) -> List[Dict]:
+def search_properties(query: str, max_price: Optional[int] = None, max_results: int = 5) -> List[Dict]:
     """
     Search for rental properties via Tavily and return a cleaned list.
 
     Parameters
     ----------
-    query     : Natural-language search string (e.g. "2 bedroom apartment in Austin under $2000")
-    max_price : Hard budget ceiling extracted from the user's original message.
-                EVERY returned property will have price ≤ max_price.
-                If None, falls back to the price in the query string, then 2500.
+    query       : Natural-language search string (e.g. "2 bedroom apartment in Austin under $2000")
+    max_price   : Hard budget ceiling extracted from the user's original message.
+                  EVERY returned property will have price ≤ max_price.
+                  If None, falls back to the price in the query string, then 2500.
+    max_results : Maximum number of property cards to return.  Default 5.
+                  The user can ask for fewer (e.g. "show me 3 properties").
     """
     tavily_api_key = os.getenv("TAVILY_API_KEY")
 
@@ -27,7 +29,7 @@ def search_properties(query: str, max_price: Optional[int] = None) -> List[Dict]
 
     if max_price is None:
         max_price = extract_price_from_query(query) or 2500
-    print(f"   [search_tool] Price cap enforced: ${max_price}")
+    print(f"   [search_tool] Price cap enforced: {max_price}  |  max_results: {max_results}")
 
     try:
         print(f"Using Tavily Web Search API for REAL property data")
@@ -60,9 +62,11 @@ def search_properties(query: str, max_price: Optional[int] = None) -> List[Dict]
             properties.append(property_data)
 
         if properties:
-            print(f"Found {len(properties)} properties via Tavily")
+            # honour the caller's cap
+            properties = properties[:max_results]
+            print(f"Found {len(properties)} properties via Tavily (capped at {max_results})")
             prices = [p['price'] for p in properties]
-            print(f"   Price range: ${min(prices)} – ${max(prices)}  (cap: ${max_price})")
+            print(f"   Price range: {min(prices)} – {max(prices)}  (cap: {max_price})")
             return properties
         else:
             print(f"No properties found for query: {query}")
@@ -139,9 +143,9 @@ def extract_real_price(content: str, title: str, query: str, max_price: int) -> 
                     if 400 <= price <= 15000:
                         capped = min(price, max_price)           # ← CAP
                         if price != capped:
-                            print(f"    Price ${price} capped to ${capped} (user budget)")
+                            print(f"    Price {price} capped to {capped} (user budget)")
                         else:
-                            print(f"    Extracted price: ${price}")
+                            print(f"    Extracted price: {price}")
                         return capped
                 except (ValueError, TypeError):
                     continue
@@ -149,7 +153,7 @@ def extract_real_price(content: str, title: str, query: str, max_price: int) -> 
     floor = max(400, int(max_price * 0.60))
     estimated_price = random.randint(floor, max_price)
     estimated_price = (estimated_price // 50) * 50 
-    print(f"    No price found → estimated ${estimated_price} (range ${floor}–${max_price})")
+    print(f"    No price found → estimated {estimated_price} (range {floor}–{max_price})")
     return estimated_price
 
 

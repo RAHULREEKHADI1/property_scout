@@ -7,3 +7,5 @@ class AgentState(MessagesState):
     current_step: str
     screenshots: List[str]
     folders_created: List[str]
+    currency_code: str       
+    currency_symbol: str   

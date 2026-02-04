@@ -13,6 +13,7 @@ class MongoDBTool:
         self.db = self.client[db_name]
         self.listings = self.db.listings
         self.user_profiles = self.db.user_profiles
+        self.conversation_memory = self.db.conversation_memory
     
     def insert_listing(self, property_data: Dict) -> str:
         property_data["created_at"] = datetime.utcnow()
@@ -44,6 +45,24 @@ class MongoDBTool:
             profile["_id"] = str(profile["_id"])
             return profile
         return {"user_id": user_id, "preferences": {}}
+    
+    def save_conversation_memory(self, user_id: str, memory: Dict):
+        """Save the last search criteria and context for quick recall"""
+        self.conversation_memory.update_one(
+            {"user_id": user_id},
+            {"$set": {
+                "last_search": memory,
+                "updated_at": datetime.utcnow()
+            }},
+            upsert=True
+        )
+    
+    def get_conversation_memory(self, user_id: str = "default") -> Dict:
+        """Retrieve the last search context"""
+        memory = self.conversation_memory.find_one({"user_id": user_id})
+        if memory:
+            return memory.get("last_search", {})
+        return {}
     
     def clear_listings(self):
         self.listings.delete_many({})

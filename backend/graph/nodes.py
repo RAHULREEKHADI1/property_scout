@@ -135,6 +135,7 @@ def extract_max_results(message: str) -> int:
 def scout_node(state: Dict) -> Dict:
     messages = state.get("messages", [])
     user_prefs = state.get("user_preferences", {})
+    conversation_memory = state.get("conversation_memory", {})
 
     if messages:
         last_msg = messages[-1]
@@ -148,10 +149,16 @@ def scout_node(state: Dict) -> Dict:
     print(f"{'=' * 60}")
     print(f"User Query: {last_message}")
     print(f"User Preferences: {json.dumps(user_prefs)}")
+    print(f"Conversation Memory: {json.dumps(conversation_memory)}")
 
     criteria = None
     if llm:
         try:
+            # Enhanced prompt with memory context
+            memory_context = ""
+            if conversation_memory:
+                memory_context = f"\n\nLast search context: {json.dumps(conversation_memory)}\nUse this to inform the current search if relevant."
+            
             system_prompt = f"""You are a property-search assistant. Your ONLY job is to read the user's message and pull out their exact search criteria.
 
 RULES (follow every one):
@@ -162,7 +169,7 @@ RULES (follow every one):
 3. bedrooms   – the number of bedrooms requested (as a string).  Default "1".
 4. requirements – any extras like "pet friendly", "parking", "gym", etc.  If none, "none".
 
-User stored preferences (merge if relevant): {json.dumps(user_prefs)}
+User stored preferences (merge if relevant): {json.dumps(user_prefs)}{memory_context}
 
 Return ONLY a single valid JSON object — no markdown, no explanation:
 {{"location": "...", "max_price": <integer>, "bedrooms": "<string>", "requirements": "..."}}"""
@@ -178,7 +185,7 @@ Return ONLY a single valid JSON object — no markdown, no explanation:
 
             criteria = json.loads(raw_text)
             criteria = _validate_criteria(criteria, last_message)
-            print(f" AI extracted criteria: {criteria}")
+            print(f" ✓ AI extracted criteria: {criteria}")
 
         except Exception as e:
             print(f" LLM extraction failed: {e} → using simple extraction")
@@ -188,14 +195,14 @@ Return ONLY a single valid JSON object — no markdown, no explanation:
 
     query = (f"{criteria.get('bedrooms', '1')} bedroom apartment in "
              f"{criteria.get('location', 'Austin')} under {criteria.get('max_price', 2500)}")
-    print(f"\n Search Query: {query}")
+    print(f"\n ✓ Search Query: {query}")
 
     wanted_count = extract_max_results(last_message)
-    print(f" User requested up to {wanted_count} results")
+    print(f" ✓ User requested up to {wanted_count} results")
 
     print(f"\n Step 1: Searching for properties…")
-    properties = search_properties(query, max_price=criteria.get("max_price"), max_results=wanted_count)
-    print(f" Found {len(properties)} properties from search")
+    properties = search_properties(query, max_price=criteria.get("max_price"), max_results=wanted_count, llm=llm)
+    print(f" ✓ Found {len(properties)} properties from search")
 
     print(f"\n Step 2: Fetching detailed property information…")
     for idx, prop in enumerate(properties):
@@ -259,7 +266,8 @@ Return ONLY valid JSON, no markdown:
     return {
         **state,
         "properties": properties,
-        "current_step": "scout_complete"
+        "current_step": "scout_complete",
+        "search_criteria": criteria  # Save for memory
     }
 
 
@@ -626,27 +634,60 @@ def crm_node(state: Dict) -> Dict:
         last_message = ""
 
     print(f"\n{'=' * 60}")
-    print(f" CRM AGENT – Persistence Node")
+    print(f" CRM AGENT – Persistence & Learning Node")
     print(f"{'=' * 60}")
     print(f"Properties to save: {len(properties)}")
 
     user_prefs = state.get("user_preferences", {})
 
-    print(f"\n Step 1: Analysing user preferences…")
+    print(f"\n Step 1: Learning from user conversation…")
     preference_updated = False
+    
+    # Learn pet preferences
     if any(w in last_message.lower() for w in ("dog", "cat", "pet")):
         user_prefs["has_pet"] = True
         preference_updated = True
-        print(f"   Detected: User has pets")
+        print(f"   ✓ Learned: User has pets")
+    
+    # Learn location preferences
+    search_criteria = state.get("search_criteria", {})
+    if search_criteria.get("location") and search_criteria["location"] != "Not specified":
+        if "preferred_locations" not in user_prefs:
+            user_prefs["preferred_locations"] = []
+        if search_criteria["location"] not in user_prefs["preferred_locations"]:
+            user_prefs["preferred_locations"].append(search_criteria["location"])
+            preference_updated = True
+            print(f"   ✓ Learned: User interested in {search_criteria['location']}")
+    
+    # Learn budget range
+    if search_criteria.get("max_price"):
+        if "budget_history" not in user_prefs:
+            user_prefs["budget_history"] = []
+        user_prefs["budget_history"].append(search_criteria["max_price"])
+        if len(user_prefs["budget_history"]) > 5:
+            user_prefs["budget_history"] = user_prefs["budget_history"][-5:]  # Keep last 5
+        avg_budget = sum(user_prefs["budget_history"]) // len(user_prefs["budget_history"])
+        user_prefs["typical_budget"] = avg_budget
+        preference_updated = True
+        print(f"   ✓ Learned: User's typical budget ~{avg_budget}")
+    
+    # Learn bedroom preferences
+    if search_criteria.get("bedrooms"):
+        if "preferred_bedrooms" not in user_prefs:
+            user_prefs["preferred_bedrooms"] = []
+        if search_criteria["bedrooms"] not in user_prefs["preferred_bedrooms"]:
+            user_prefs["preferred_bedrooms"].append(search_criteria["bedrooms"])
+            preference_updated = True
+            print(f"   ✓ Learned: User interested in {search_criteria['bedrooms']} bedroom properties")
 
     if preference_updated:
         try:
             mongo_tool.update_user_preference("default", user_prefs)
-            print(f"   Preferences updated in DB")
+            print(f"   ✓ Preferences updated in database")
         except Exception as e:
-            print(f"   Error updating preferences: {e}")
+            print(f"   ✗ Error updating preferences: {e}")
     else:
-        print(f"   No new preferences detected")
+        print(f"   No new preferences detected this session")
 
     print(f"\n Step 2: Saving properties to database…")
     saved_count = 0
@@ -676,14 +717,15 @@ def crm_node(state: Dict) -> Dict:
 
             mongo_tool.insert_listing(listing_data)
             saved_count += 1
-            print(f"   Property {idx + 1} saved – {prop['address']}  |  {cur_symbol}{prop['price']}")
+            print(f"   ✓ Property {idx + 1} saved – {prop['address']}  |  {cur_symbol}{prop['price']}")
 
         except Exception as e:
-            print(f"   Error saving property {idx + 1}: {e}")
+            print(f"   ✗ Error saving property {idx + 1}: {e}")
             continue
 
     print(f"\n{'=' * 60}")
     print(f" CRM COMPLETE – {saved_count}/{len(properties)} saved")
+    print(f" User preferences learned and stored for future queries")
     print(f"{'=' * 60}\n")
 
     return {

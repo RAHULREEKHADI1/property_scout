@@ -42,7 +42,7 @@ const ChatInterface = ({ onNewProperties }) => {
       }
     } catch (error) {
       console.error('Chat error:', error);
-      let errorMessage = ' Sorry, I encountered an error. ';
+      let errorMessage = '⚠️ Sorry, I encountered an error. ';
       
       if (error.response?.data?.detail) {
         errorMessage += error.response.data.detail;
@@ -79,34 +79,43 @@ const ChatInterface = ({ onNewProperties }) => {
   };
 
   return (
-    <div className="card h-[600px] flex flex-col shadow-xl">
-      <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white p-5 rounded-t-xl">
+    <div className="h-[600px] flex flex-col shadow-2xl rounded-2xl overflow-hidden border border-purple-500/20 bg-gradient-to-br from-slate-800/90 to-slate-900/90 backdrop-blur-xl">
+      <div className="bg-gradient-to-r from-purple-600 via-cyan-600 to-pink-600 text-white p-5">
         <h2 className="text-2xl font-bold flex items-center gap-3 mb-2">
-          <span className="text-3xl">🤖</span>
+          <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center backdrop-blur-sm">
+            <span className="text-2xl">🤖</span>
+          </div>
           <div>
             <div>Chat with AI Agent</div>
             <div className="text-sm font-normal opacity-90 mt-0.5">
-              {isLoading ? 'Searching properties...' : 'Ready to help'}
+              {isLoading ? (
+                <span className="flex items-center gap-2">
+                  <span className="inline-block w-2 h-2 bg-white rounded-full animate-pulse"></span>
+                  Searching properties...
+                </span>
+              ) : (
+                'Ready to help'
+              )}
             </div>
           </div>
         </h2>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-gradient-to-br from-gray-50 to-white">
+      <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-gradient-to-b from-slate-900/50 to-slate-800/50">
         {messages.map((msg, idx) => (
           <div
             key={idx}
             className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in`}
           >
             <div
-              className={`max-w-[85%] rounded-2xl px-5 py-3 shadow-md ${
+              className={`max-w-[85%] rounded-2xl px-5 py-3 shadow-lg ${
                 msg.role === 'user'
-                  ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white'
-                  : 'bg-white text-gray-800 border-2 border-gray-100'
+                  ? 'bg-gradient-to-r from-purple-600 to-cyan-600 text-white'
+                  : 'bg-gradient-to-br from-slate-700/90 to-slate-800/90 text-gray-100 border border-purple-500/20 backdrop-blur-sm'
               }`}
             >
               {msg.role === 'assistant' && (
-                <div className="flex items-center gap-2 mb-2 text-indigo-600 font-semibold">
+                <div className="flex items-center gap-2 mb-2 text-purple-400 font-semibold">
                   <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                   </svg>
@@ -120,14 +129,14 @@ const ChatInterface = ({ onNewProperties }) => {
         
         {isLoading && (
           <div className="flex justify-start animate-fade-in">
-            <div className="bg-white text-gray-800 rounded-2xl px-5 py-4 shadow-md border-2 border-indigo-100">
+            <div className="bg-gradient-to-br from-slate-700/90 to-slate-800/90 text-gray-100 rounded-2xl px-5 py-4 shadow-lg border border-purple-500/20 backdrop-blur-sm">
               <div className="flex items-center gap-3">
                 <div className="flex gap-1">
-                  <div className="w-2.5 h-2.5 bg-indigo-600 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                  <div className="w-2.5 h-2.5 bg-purple-600 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                  <div className="w-2.5 h-2.5 bg-pink-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                  <div className="w-2.5 h-2.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                  <div className="w-2.5 h-2.5 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                  <div className="w-2.5 h-2.5 bg-pink-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
                 </div>
-                <span className="text-sm text-gray-700 font-medium">AI agent is working...</span>
+                <span className="text-sm text-gray-300 font-medium">AI agent is working...</span>
               </div>
             </div>
           </div>
@@ -135,13 +144,15 @@ const ChatInterface = ({ onNewProperties }) => {
         
         {messages.length === 1 && !isLoading && (
           <div className="animate-fade-in">
-            <p className="text-sm text-gray-600 mb-3 font-semibold">💡 Try these searches:</p>
+            <p className="text-sm text-purple-400 mb-3 font-semibold flex items-center gap-2">
+              <span>💡</span> Try these searches:
+            </p>
             <div className="space-y-2">
               {quickActions.map((action, idx) => (
                 <button
                   key={idx}
                   onClick={() => handleQuickAction(action)}
-                  className="w-full text-left bg-white hover:bg-indigo-50 border-2 border-gray-200 hover:border-indigo-300 rounded-xl px-4 py-3 text-sm text-gray-700 transition-all duration-200 shadow-sm hover:shadow-md"
+                  className="w-full text-left bg-gradient-to-r from-slate-700/50 to-slate-800/50 hover:from-purple-600/20 hover:to-cyan-600/20 border border-purple-500/20 hover:border-purple-500/40 rounded-xl px-4 py-3 text-sm text-gray-300 transition-all duration-200 shadow-md hover:shadow-xl backdrop-blur-sm"
                 >
                   <span className="mr-2">🔍</span>
                   {action}
@@ -154,7 +165,7 @@ const ChatInterface = ({ onNewProperties }) => {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="p-4 bg-white border-t-2 border-gray-100 rounded-b-xl">
+      <div className="p-4 bg-gradient-to-r from-slate-800/90 to-slate-900/90 border-t border-purple-500/20 backdrop-blur-sm">
         <div className="flex gap-3">
           <input
             type="text"
@@ -162,7 +173,7 @@ const ChatInterface = ({ onNewProperties }) => {
             onChange={(e) => setInputMessage(e.target.value)}
             onKeyPress={handleKeyPress}
             placeholder="Describe your ideal property..."
-            className="flex-1 px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 focus:outline-none transition-all duration-200 text-sm"
+            className="flex-1 px-4 py-3 bg-slate-700/50 border border-purple-500/20 rounded-xl focus:border-purple-500 focus:ring-2 focus:ring-purple-500/30 focus:outline-none transition-all duration-200 text-sm text-gray-100 placeholder-gray-500 backdrop-blur-sm"
             disabled={isLoading}
           />
           <button
@@ -170,8 +181,8 @@ const ChatInterface = ({ onNewProperties }) => {
             disabled={isLoading || !inputMessage.trim()}
             className={`px-6 py-3 rounded-xl font-semibold transition-all duration-200 flex items-center gap-2 ${
               isLoading || !inputMessage.trim()
-                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white shadow-lg hover:shadow-xl'
+                ? 'bg-slate-700/50 text-gray-500 cursor-not-allowed border border-slate-600/50'
+                : 'bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-700 hover:to-cyan-700 text-white shadow-lg hover:shadow-xl hover:shadow-purple-500/50'
             }`}
           >
             {isLoading ? (

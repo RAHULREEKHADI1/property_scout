@@ -56,9 +56,12 @@ def extract_criteria_simple(message: str) -> dict:
                 location = city.title()
                 break
 
-    criteria["location"] = location if location else "Not specified"
+    # CRITICAL: Location is now mandatory - if not found, set to None
+    # This will trigger a validation error later
+    criteria["location"] = location
 
-    price_match = re.search(r'\$?([\d,]+)k?', message)
+    # Extract price without currency symbols
+    price_match = re.search(r'([\d,]+)k?', message)
     if price_match:
         price = int(price_match.group(1).replace(',', ''))
         if price < 100:
@@ -67,12 +70,18 @@ def extract_criteria_simple(message: str) -> dict:
     else:
         criteria["max_price"] = 2500
 
+    # Extract bedrooms - detect 0 bedroom requests and mark as invalid
     if "studio" in message_lower:
         criteria["bedrooms"] = "1"
+    elif re.search(r'\b0\s*bed', message_lower):
+        # User asked for 0 bedrooms - this is invalid
+        criteria["bedrooms"] = None
     elif re.search(r'\b2\b|two\s*bed', message_lower):
         criteria["bedrooms"] = "2"
     elif re.search(r'\b3\b|three\s*bed', message_lower):
         criteria["bedrooms"] = "3"
+    elif re.search(r'\b4\b|four\s*bed', message_lower):
+        criteria["bedrooms"] = "4"
     else:
         criteria["bedrooms"] = "1"
 
@@ -90,8 +99,12 @@ def _validate_criteria(raw: dict, user_message: str) -> dict:
       • Ensure max_price is an int and is the EXACT number the user typed.
       • If the LLM invented or changed the price, override with regex extraction.
       • Fill in missing keys with safe defaults.
+      • CRITICAL: Validate location is present (mandatory field)
+      • CRITICAL: Validate minimum price threshold (>= 100)
+      • CRITICAL: Validate bedrooms (must be >= 1)
     """
-    price_match = re.search(r'\$?([\d,]+)k?', user_message)
+    # Extract price without currency symbols
+    price_match = re.search(r'([\d,]+)k?', user_message)
     if price_match:
         user_price = int(price_match.group(1).replace(',', ''))
         if user_price < 100:
@@ -105,8 +118,23 @@ def _validate_criteria(raw: dict, user_message: str) -> dict:
     except (TypeError, ValueError):
         raw["max_price"] = 2500
 
-    raw.setdefault("location", "Not specified")
-    raw.setdefault("bedrooms", "1")
+    # CRITICAL: Location must be present and valid
+    # If location is missing, None, empty, or "Not specified", criteria is invalid
+    location = raw.get("location")
+    if not location or location == "Not specified" or not location.strip():
+        raw["location"] = None  # Will trigger validation error
+    
+    # CRITICAL: Validate bedrooms - cannot be 0 or negative
+    bedrooms = raw.get("bedrooms", "1")
+    try:
+        bedroom_int = int(str(bedrooms).strip())
+        if bedroom_int <= 0:
+            raw["bedrooms"] = None  # Will trigger validation error
+        else:
+            raw["bedrooms"] = str(bedroom_int)
+    except (ValueError, TypeError):
+        raw["bedrooms"] = "1"
+    
     raw.setdefault("requirements", "none")
     return raw
 
@@ -162,17 +190,26 @@ def scout_node(state: Dict) -> Dict:
             system_prompt = f"""You are a property-search assistant. Your ONLY job is to read the user's message and pull out their exact search criteria.
 
 RULES (follow every one):
-1. location   – the city or neighbourhood the user typed.  If none, use "Not specified".
-2. max_price  – the EXACT dollar amount the user stated as their budget ceiling.
-                DO NOT round, guess, or invent a number.  If the user wrote "$2 000" return 2000.
+1. location   – MANDATORY. The city or neighbourhood the user typed. If NO location is mentioned, return null.
+                Examples: "Brooklyn", "Austin", "London", "Mumbai", "Tokyo"
+                Location is REQUIRED - if user says "under 15000" without location, return location as null.
+2. max_price  – the EXACT amount the user stated (without currency symbols).
+                DO NOT round, guess, or invent a number.
+                If the user wrote "2000" return 2000, if "15000" return 15000.
                 If no price is mentioned, return 2500.
-3. bedrooms   – the number of bedrooms requested (as a string).  Default "1".
+3. bedrooms   – the number of bedrooms requested (as a string). 
+                CRITICAL: If user says "0 bedroom" or "0 bhk", return "0" (this will be rejected).
+                Studios count as 1 bedroom. Default "1".
+                Valid values: "1", "2", "3", "4", etc. (never "0")
 4. requirements – any extras like "pet friendly", "parking", "gym", etc.  If none, "none".
+
+CRITICAL: Location is mandatory. Queries like "under 15000" or "2 bedroom under 3000" without a location
+should have location set to null, triggering an error that asks the user to specify WHERE they want to search.
 
 User stored preferences (merge if relevant): {json.dumps(user_prefs)}{memory_context}
 
 Return ONLY a single valid JSON object — no markdown, no explanation:
-{{"location": "...", "max_price": <integer>, "bedrooms": "<string>", "requirements": "..."}}"""
+{{"location": "city name or null", "max_price": <integer>, "bedrooms": "<string>", "requirements": "..."}}"""
 
             response = llm.invoke([
                 SystemMessage(content=system_prompt),
@@ -192,6 +229,83 @@ Return ONLY a single valid JSON object — no markdown, no explanation:
             criteria = extract_criteria_simple(last_message)
     else:
         criteria = extract_criteria_simple(last_message)
+
+    # ========================================
+    # CRITICAL: VALIDATE LOCATION IS PRESENT
+    # ========================================
+    if not criteria.get("location") or criteria["location"] == "Not specified":
+        print(f"\n{'=' * 60}")
+        print(f" ❌ VALIDATION ERROR: Location is mandatory")
+        print(f"{'=' * 60}\n")
+        
+        return {
+            **state,
+            "properties": [],
+            "current_step": "validation_error",
+            "error": "location_required",
+            "error_message": (
+                "I need to know WHERE you're looking for a property. "
+                "Please specify a location. For example:\n"
+                "• 'Find a 2 bedroom apartment in Austin under 2000'\n"
+                "• 'Show me properties in Brooklyn under 3000'\n"
+                "• 'Apartment in London under £1500'"
+            )
+        }
+    
+    print(f" ✓ Location validated: {criteria['location']}")
+
+    # ========================================
+    # CRITICAL: VALIDATE MINIMUM PRICE
+    # ========================================
+    max_price = criteria.get("max_price", 2500)
+    if max_price < 100:
+        print(f"\n{'=' * 60}")
+        print(f" ❌ VALIDATION ERROR: Price too low ({max_price})")
+        print(f"{'=' * 60}\n")
+        
+        cur_symbol = state.get("currency_symbol", "$")
+        
+        return {
+            **state,
+            "properties": [],
+            "current_step": "validation_error",
+            "error": "price_too_low",
+            "error_message": (
+                f"I cannot find properties for {cur_symbol}{max_price}. "
+                f"That price is unrealistically low for rental properties.\n\n"
+                f"Please specify a realistic budget. For example:\n"
+                f"• Minimum budget should be at least {cur_symbol}100\n"
+                f"• Try: 'Find apartment in {criteria['location']} under {cur_symbol}1500'\n"
+                f"• Or: 'Show me properties in {criteria['location']} under {cur_symbol}2000'"
+            )
+        }
+    
+    print(f" ✓ Price validated: {max_price}")
+
+    # ========================================
+    # CRITICAL: VALIDATE BEDROOMS (cannot be 0)
+    # ========================================
+    if criteria.get("bedrooms") is None:
+        print(f"\n{'=' * 60}")
+        print(f" ❌ VALIDATION ERROR: Invalid bedroom count")
+        print(f"{'=' * 60}\n")
+        
+        return {
+            **state,
+            "properties": [],
+            "current_step": "validation_error",
+            "error": "invalid_bedrooms",
+            "error_message": (
+                "I cannot search for properties with 0 bedrooms. "
+                "Please specify at least 1 bedroom (or 'studio').\n\n"
+                "For example:\n"
+                "• 'Find a studio apartment in Austin under 1500'\n"
+                "• 'Show me 1 bedroom properties in Brooklyn under 2000'\n"
+                "• 'Find 2 bedroom apartment in London under £1500'"
+            )
+        }
+    
+    print(f" ✓ Bedrooms validated: {criteria['bedrooms']}")
 
     query = (f"{criteria.get('bedrooms', '1')} bedroom apartment in "
              f"{criteria.get('location', 'Austin')} under {criteria.get('max_price', 2500)}")

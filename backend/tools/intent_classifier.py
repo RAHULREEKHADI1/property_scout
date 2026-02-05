@@ -224,7 +224,15 @@ def format_memory_response(memory: Dict, preferences: Dict) -> str:
             response_parts.append(f"• Interested in: {locations}")
         
         if preferences.get('typical_budget'):
-            response_parts.append(f"• Typical budget: ${preferences['typical_budget']}")
+            # Use currency from preferences if available, otherwise default
+            currency_code = preferences.get('currency_code', 'USD')
+            currency_map = {
+                'USD': '$', 'EUR': '€', 'GBP': '£', 'INR': '₹', 
+                'JPY': '¥', 'CNY': '¥', 'KRW': '₩', 'CHF': 'CHF',
+                'CAD': 'CA$', 'AUD': 'A$'
+            }
+            symbol = currency_map.get(currency_code, '$')
+            response_parts.append(f"• Typical budget: {symbol}{preferences['typical_budget']}")
         
         if preferences.get('preferred_bedrooms'):
             bedrooms = ', '.join(preferences['preferred_bedrooms'])
@@ -232,7 +240,15 @@ def format_memory_response(memory: Dict, preferences: Dict) -> str:
         
         if preferences.get('budget_history'):
             budgets = preferences['budget_history']
-            response_parts.append(f"• Recent budgets: {', '.join(f'${b}' for b in budgets[-3:])}")
+            # Get currency for budget history
+            currency_code = preferences.get('currency_code', 'USD')
+            currency_map = {
+                'USD': '$', 'EUR': '€', 'GBP': '£', 'INR': '₹', 
+                'JPY': '¥', 'CNY': '¥', 'KRW': '₩', 'CHF': 'CHF',
+                'CAD': 'CA$', 'AUD': 'A$'
+            }
+            symbol = currency_map.get(currency_code, '$')
+            response_parts.append(f"• Recent budgets: {', '.join(f'{symbol}{b}' for b in budgets[-3:])}")
         
         response_parts.append("")
     

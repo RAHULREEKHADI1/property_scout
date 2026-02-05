@@ -179,16 +179,17 @@ async def run_agent(user_message: str, user_id: str = "default"):
     
     # First, check if user has a saved currency preference
     saved_currency = mongo_tool.get_user_currency(user_id)
-    detected_currency = detect_currency(user_message)
+    
+    # Use LLM-based currency detection (much smarter than regex patterns)
+    detected_currency = detect_currency(user_message, intent_llm)
     
     # If user mentions a currency in this message, it overrides their saved preference
-    if detected_currency.code != "USD" or any(
-        curr in user_message.lower() for curr in ["$", "usd", "dollar", "₹", "inr", "rupee", "euro", "pound"]
-    ):
+    # Check if the detected currency is different from default USD
+    if detected_currency.code != "USD" or detected_currency.code != saved_currency.get('code', 'USD'):
         # User explicitly mentioned currency - update their preference
         currency = detected_currency
         mongo_tool.save_user_currency(user_id, currency.code, currency.symbol)
-        print(f"✓ User mentioned currency: {currency.code} ({currency.symbol})")
+        print(f"✓ Detected currency: {currency.code} ({currency.symbol})")
         print(f"✓ Saved as user preference")
     else:
         # Use saved preference
@@ -230,6 +231,22 @@ async def run_agent(user_message: str, user_id: str = "default"):
         }
         
         result = await graph.ainvoke(initial_state)
+        
+        # Check for validation errors (e.g., missing location)
+        if result.get("current_step") == "validation_error":
+            error_type = result.get("error", "unknown")
+            error_message = result.get("error_message", "Invalid search criteria")
+            
+            print(f"\n{'='*60}")
+            print(f" VALIDATION ERROR: {error_type}")
+            print(f"{'='*60}")
+            
+            return {
+                "response": error_message,
+                "properties": [],
+                "state": "validation_error",
+                "error": error_type
+            }
         
         # Check if result came from cache
         from_cache = result.get("from_cache", False)

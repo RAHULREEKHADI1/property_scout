@@ -124,14 +124,17 @@ def extract_real_price(content: str, title: str, query: str, max_price: int) -> 
       1. Regex from content  (capped)
       2. Regex from title    (capped)
       3. Random value ≤ max_price  (realistic spread below the cap)
+    
+    Note: Currency symbols are removed - LLM handles currency detection separately
     """
+    # Updated patterns without hardcoded currency symbols
     price_patterns = [
-        r'\$\s*(\d{1,2},?\d{3})\s*/?mo',
-        r'\$\s*(\d{1,2},?\d{3})\s*/?\s*month',
-        r'\$\s*(\d{1,2},?\d{3})\s*per\s*month',
-        r'rent\s*[:;]?\s*\$\s*(\d{1,2},?\d{3})',
-        r'(\d{1,2},?\d{3})\s*dollars?\s*/?\s*month',
-        r'\$(\d{1,2},?\d{3})',
+        r'[\$€£₹¥₩]\s*(\d{1,2},?\d{3})\s*/?mo',
+        r'[\$€£₹¥₩]\s*(\d{1,2},?\d{3})\s*/?\s*month',
+        r'[\$€£₹¥₩]\s*(\d{1,2},?\d{3})\s*per\s*month',
+        r'rent\s*[:;]?\s*[\$€£₹¥₩]?\s*(\d{1,2},?\d{3})',
+        r'(\d{1,2},?\d{3})\s*(?:dollars?|euros?|pounds?|rupees?|yen)\s*/?\s*month',
+        r'[\$€£₹¥₩]?(\d{1,2},?\d{3})',
     ]
 
     for source in (content, title):
@@ -159,7 +162,9 @@ def extract_real_price(content: str, title: str, query: str, max_price: int) -> 
 
 
 def extract_price_from_query(query: str) -> Optional[int]:
-    price_match = re.search(r'\$?([\d,]+)k?', query)
+    """Extract price from query string, handling various number formats."""
+    # Match numbers with optional currency symbols (any currency)
+    price_match = re.search(r'[\$€£₹¥₩]?\s*([\d,]+)k?', query)
     if price_match:
         price = int(price_match.group(1).replace(',', ''))
         if price < 100:

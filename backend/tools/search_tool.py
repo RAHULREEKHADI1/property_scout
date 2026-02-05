@@ -5,7 +5,7 @@ import re
 import random
 
 
-def search_properties(query: str, max_price: Optional[int] = None, max_results: int = 5) -> List[Dict]:
+def search_properties(query: str, max_price: Optional[int] = None, max_results: int = 5, llm=None) -> List[Dict]:
     """
     Search for rental properties via Tavily and return a cleaned list.
 
@@ -17,6 +17,7 @@ def search_properties(query: str, max_price: Optional[int] = None, max_results: 
                   If None, falls back to the price in the query string, then 2500.
     max_results : Maximum number of property cards to return.  Default 5.
                   The user can ask for fewer (e.g. "show me 3 properties").
+    llm         : Optional LLM instance for generating realistic addresses
     """
     tavily_api_key = os.getenv("TAVILY_API_KEY")
 
@@ -51,7 +52,7 @@ def search_properties(query: str, max_price: Optional[int] = None, max_results: 
                 "id":           idx + 1,
                 "title":        clean_title(title),
                 "price":        extract_real_price(content, title, query, max_price),   
-                "address":      extract_real_address(content, title, query, idx),
+                "address":      extract_real_address(content, title, query, idx, llm),  # Pass LLM
                 "description":  extract_description(content, title, query),            
                 "bedrooms":     extract_bedrooms_from_content(content, query),
                 "bathrooms":    extract_bathrooms(content, query),
@@ -64,7 +65,7 @@ def search_properties(query: str, max_price: Optional[int] = None, max_results: 
         if properties:
             # honour the caller's cap
             properties = properties[:max_results]
-            print(f"Found {len(properties)} properties via Tavily (capped at {max_results})")
+            print(f"✓ Found {len(properties)} properties via Tavily (capped at {max_results})")
             prices = [p['price'] for p in properties]
             print(f"   Price range: {min(prices)} – {max(prices)}  (cap: {max_price})")
             return properties
@@ -168,11 +169,11 @@ def extract_price_from_query(query: str) -> Optional[int]:
 
 
 
-def extract_real_address(content: str, title: str, query: str, idx: int) -> str:
+def extract_real_address(content: str, title: str, query: str, idx: int, llm=None) -> str:
     """
     Try to pull a real address from the Tavily content/title.
-    Falls back to a generated placeholder tagged with [Generated]
-    so downstream code knows it is synthetic.
+    If not found, use LLM to generate a realistic address for the location.
+    Falls back to a generated placeholder only if LLM is unavailable.
     """
     address_patterns = [
         r'(\d+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Way|Court|Ct|Place|Pl))[,\s]+[A-Z][a-z]+)',
@@ -184,11 +185,47 @@ def extract_real_address(content: str, title: str, query: str, idx: int) -> str:
             match = re.search(pattern, source)
             if match:
                 address = match.group(1).strip()
-                print(f"    Extracted address: {address}")
+                print(f"    ✓ Extracted address: {address}")
                 return address
 
     location = extract_location_from_query(query)
+    
+    # Try to use LLM to generate a realistic street name for the location
+    if llm:
+        try:
+            from langchain_core.messages import SystemMessage, HumanMessage
+            import json
+            
+            prompt = f"""Generate a realistic street address for a rental property in {location}.
+The address should:
+- Use real or realistic street names common in {location}
+- Include a building number
+- Be formatted properly (e.g., "123 Main Street, Austin" or "456 Park Avenue, Brooklyn")
+- Sound authentic, not generic
 
+Return ONLY a JSON object with no markdown:
+{{"address": "full street address including city"}}"""
+
+            response = llm.invoke([
+                SystemMessage(content="You generate realistic property addresses."),
+                HumanMessage(content=prompt)
+            ])
+            
+            raw_text = response.content.strip()
+            raw_text = re.sub(r'^```(?:json)?\s*', '', raw_text)
+            raw_text = re.sub(r'\s*```$', '', raw_text)
+            
+            result = json.loads(raw_text)
+            generated_address = result.get("address", "")
+            
+            if generated_address and len(generated_address) > 10:
+                print(f"    ✓ LLM generated address: {generated_address}")
+                return generated_address
+                
+        except Exception as e:
+            print(f"    LLM address generation failed: {e}")
+    
+    # Fallback: use pattern-based generation
     street_prefixes = ["North", "South", "East", "West", ""]
     street_names   = ["Main", "Oak", "Park", "Broadway", "Market", "Central",
                       "First", "Second", "Lake", "Hill", "Elm", "Maple", "Cedar",
@@ -202,7 +239,7 @@ def extract_real_address(content: str, title: str, query: str, idx: int) -> str:
     number = (idx * 137 + 100) % 9900 + 100
 
     generated_address = f"{number} {street}, {location}"
-    print(f"    Generated address: {generated_address}")
+    print(f"    Generated address (fallback): {generated_address}")
     return generated_address
 
 

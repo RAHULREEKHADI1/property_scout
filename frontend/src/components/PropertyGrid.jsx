@@ -26,7 +26,7 @@ const PropertyGrid = ({ properties }) => {
     } else {
       const query = searchQuery.toLowerCase();
       const filtered = allProperties.filter(property => {
-        const symbol = property.currency_symbol || '$';
+        const symbol = property.currency_symbol;
         const displayedPrice = symbol + property.price.toLocaleString() + '/mo';
 
         return (

@@ -11,11 +11,12 @@ def classify_intent(message: str, llm: Optional[ChatOpenAI] = None) -> Dict:
     - 'greeting': Simple greetings like "hi", "hello", "how are you"
     - 'search': Property search queries
     - 'follow_up': Follow-up questions about previous search
+    - 'memory_retrieval': Asking about preferences or last search
     - 'invalid': Unclear or irrelevant queries
     
     Returns:
         {
-            'intent': str,  # greeting, search, follow_up, or invalid
+            'intent': str,  # greeting, search, follow_up, memory_retrieval, or invalid
             'confidence': float,  # 0-1
             'reason': str  # Explanation
         }
@@ -35,6 +36,26 @@ def classify_intent(message: str, llm: Optional[ChatOpenAI] = None) -> Dict:
                 'intent': 'greeting',
                 'confidence': 0.95,
                 'reason': 'Detected greeting pattern'
+            }
+    
+    # Memory retrieval patterns
+    memory_patterns = [
+        r'(what|show|tell|give).*?(my|last|previous|recent).*(preference|search|query|criteria)',
+        r'(what did i|remind me what i).*(search|look|ask)',
+        r'my (last|previous|recent) (search|query|preference|criteria)',
+        r'what was (my|the) last',
+        r'show me my (preference|history|last search)',
+        r'what (am i|was i) looking for',
+        r'recall my',
+        r'my search history'
+    ]
+    
+    for pattern in memory_patterns:
+        if re.search(pattern, message_lower):
+            return {
+                'intent': 'memory_retrieval',
+                'confidence': 0.95,
+                'reason': 'Detected memory retrieval request'
             }
     
     # Property search keywords
@@ -70,7 +91,8 @@ def classify_intent(message: str, llm: Optional[ChatOpenAI] = None) -> Dict:
         r'like (the|that) (last|previous)',
         r'(same|similar) (but|with)',
         r'more like',
-        r'again'
+        r'^(again|more)$',
+        r'show (more|again)'
     ]
     
     for pattern in follow_up_patterns:
@@ -90,7 +112,8 @@ Classify the user's message into ONE of these categories:
 1. "greeting" - Simple greetings, pleasantries, or general conversation
 2. "search" - Property/apartment search queries with criteria
 3. "follow_up" - Questions about previous searches or modifications
-4. "invalid" - Unclear, off-topic, or irrelevant queries
+4. "memory_retrieval" - Asking about their preferences, last search, or search history
+5. "invalid" - Unclear, off-topic, or irrelevant queries
 
 Respond ONLY with valid JSON:
 {"intent": "<category>", "confidence": <0-1>, "reason": "<brief explanation>"}"""
@@ -150,7 +173,70 @@ def generate_response(intent_result: Dict, user_name: str = "there") -> str:
     elif intent == 'follow_up':
         return "I'd be happy to help with that! However, I need a bit more information. Could you please specify your full search criteria again? For example: 'Find me a 2 bedroom apartment in Austin under $2000'."
     
+    elif intent == 'memory_retrieval':
+        return None  # Will be handled in workflow to show actual memory
+    
     elif intent == 'invalid':
         return "I'm not quite sure I understand what you're looking for. I'm Estate-Scout, and I help find rental properties. Try something like: 'Find me a 2 bedroom apartment in Brooklyn under $2500' or 'Show me studios in Austin under $1500'."
     
     return None
+
+
+def format_memory_response(memory: Dict, preferences: Dict) -> str:
+    """Format the memory and preferences for display"""
+    if not memory and not preferences:
+        return "I don't have any search history or preferences saved yet. Start by telling me what you're looking for!"
+    
+    response_parts = []
+    
+    # Format last search
+    if memory and memory.get('last_query'):
+        response_parts.append("📋 **Your Last Search:**")
+        response_parts.append(f"Query: \"{memory['last_query']}\"")
+        
+        if memory.get('criteria'):
+            criteria = memory['criteria']
+            if criteria.get('location'):
+                response_parts.append(f"• Location: {criteria['location']}")
+            if criteria.get('bedrooms'):
+                response_parts.append(f"• Bedrooms: {criteria['bedrooms']}")
+            if criteria.get('max_price'):
+                currency = memory.get('currency', {})
+                symbol = currency.get('symbol', '$')
+                response_parts.append(f"• Max Budget: {symbol}{criteria['max_price']}")
+            if criteria.get('requirements') and criteria['requirements'] != 'none':
+                response_parts.append(f"• Requirements: {criteria['requirements']}")
+        
+        if memory.get('property_count'):
+            response_parts.append(f"• Found: {memory['property_count']} properties")
+        
+        response_parts.append("")
+    
+    # Format learned preferences
+    if preferences:
+        response_parts.append("🎯 **What I've Learned About You:**")
+        
+        if preferences.get('has_pet'):
+            response_parts.append("• You have a pet")
+        
+        if preferences.get('preferred_locations'):
+            locations = ', '.join(preferences['preferred_locations'])
+            response_parts.append(f"• Interested in: {locations}")
+        
+        if preferences.get('typical_budget'):
+            response_parts.append(f"• Typical budget: ${preferences['typical_budget']}")
+        
+        if preferences.get('preferred_bedrooms'):
+            bedrooms = ', '.join(preferences['preferred_bedrooms'])
+            response_parts.append(f"• Preferred sizes: {bedrooms} bedroom(s)")
+        
+        if preferences.get('budget_history'):
+            budgets = preferences['budget_history']
+            response_parts.append(f"• Recent budgets: {', '.join(f'${b}' for b in budgets[-3:])}")
+        
+        response_parts.append("")
+    
+    if response_parts:
+        response_parts.append("Would you like me to search again with these criteria, or would you like to adjust something?")
+    
+    return "\n".join(response_parts)

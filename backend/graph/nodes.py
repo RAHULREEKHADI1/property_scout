@@ -200,6 +200,50 @@ Return ONLY a single valid JSON object — no markdown, no explanation:
     wanted_count = extract_max_results(last_message)
     print(f" ✓ User requested up to {wanted_count} results")
 
+    # ========================================
+    # ✨ NEW: CACHE CHECK BEFORE EXPENSIVE SEARCH
+    # ========================================
+    print(f"\n{'=' * 60}")
+    print(f" CACHE LOOKUP")
+    print(f"{'=' * 60}")
+    
+    # Get user_id from state (defaults to "default" for single-user systems)
+    user_id = state.get("user_id", "default")
+    
+    # Check if we have cached results for this exact search
+    cached_properties = mongo_tool.get_cached_search(criteria, wanted_count)
+    
+    if cached_properties:
+        # 🎉 CACHE HIT! Skip expensive search, LLM cleaning, and screenshots
+        print(f"✓✓✓ CACHE HIT - Returning {len(cached_properties)} properties from cache")
+        print(f"    Skipping: Tavily search, LLM cleaning, screenshot generation")
+        print(f"    Time saved: ~60 seconds")
+        
+        # Apply pet-friendly filter if user has pet (same as original logic)
+        if user_prefs.get("has_pet"):
+            print(f"\n Filtering cached results for pet-friendly properties (user has pet)")
+            cached_properties = [p for p in cached_properties if p.get("pet_friendly", False)]
+            print(f" {len(cached_properties)} pet-friendly properties remain")
+        
+        print(f"\n{'=' * 60}")
+        print(f" SCOUT COMPLETE (FROM CACHE) – {len(cached_properties)} properties → Inspector")
+        print(f"{'=' * 60}\n")
+        
+        return {
+            **state,
+            "properties": cached_properties,
+            "current_step": "scout_complete",
+            "search_criteria": criteria,
+            "from_cache": True  # Flag to track cache usage
+        }
+    
+    # ❌ CACHE MISS - Continue with expensive search
+    print(f"✗ Cache miss - Performing new search")
+    print(f"  This search will be cached for 24 hours")
+    # ========================================
+    # END OF CACHE CHECK
+    # ========================================
+
     print(f"\n Step 1: Searching for properties…")
     properties = search_properties(query, max_price=criteria.get("max_price"), max_results=wanted_count, llm=llm)
     print(f" ✓ Found {len(properties)} properties from search")
@@ -259,6 +303,25 @@ Return ONLY valid JSON, no markdown:
         properties = [p for p in properties if p.get("pet_friendly", False)]
         print(f" {len(properties)} pet-friendly properties remain")
 
+    # ========================================
+    # ✨ NEW: SAVE SEARCH RESULTS TO CACHE
+    # ========================================
+    if properties:
+        print(f"\n{'=' * 60}")
+        print(f" SAVING TO CACHE")
+        print(f"{'=' * 60}")
+        try:
+            # Save the cleaned, filtered properties to cache for 24 hours
+            mongo_tool.save_search_cache(criteria, properties)
+            print(f" ✓ Cached {len(properties)} properties for future queries")
+            print(f"   Cache will expire in 24 hours")
+        except Exception as e:
+            print(f" ⚠ Failed to cache results: {e}")
+            # Don't fail the request if caching fails - just log it
+    # ========================================
+    # END OF CACHE SAVE
+    # ========================================
+
     print(f"\n{'=' * 60}")
     print(f" SCOUT COMPLETE – {len(properties)} properties → Inspector")
     print(f"{'=' * 60}\n")
@@ -267,9 +330,9 @@ Return ONLY valid JSON, no markdown:
         **state,
         "properties": properties,
         "current_step": "scout_complete",
-        "search_criteria": criteria  # Save for memory
+        "search_criteria": criteria,  # Save for memory
+        "from_cache": False  # Flag to indicate fresh search
     }
-
 
 
 async def inspector_node(state: Dict) -> Dict:
